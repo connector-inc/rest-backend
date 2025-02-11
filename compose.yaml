@@ -1,11 +1,12 @@
 services:
+
   api:
     build: .
     restart: always
     # ports:
-    # - "8000:8000"
+    # - "10001:10000" # HTTP only
     environment:
-      - PORT=8000 
+      - PORT=10000 
     depends_on:
       nginx:
         condition: service_started
@@ -16,7 +17,7 @@ services:
     image: nginx:latest
     restart: always
     ports:
-      - "8000:443"
+      - "10000:443" # HTTPS support
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf
       - ./certificates:/etc/nginx/certificates

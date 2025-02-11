@@ -6,17 +6,17 @@
 
 - mkcert:
 
-    ```shell
-    sudo mkcert -install
-    sudo mkcert localhost 127.0.0.1 ::1
-    ```
+  ```shell
+  sudo mkcert -install
+  sudo mkcert localhost 127.0.0.1 ::1
+  ```
 
 ### 2. Running the server
 
-<!-- #### PowerShell
+#### PowerShell
 
 ```shell
-uv run uvicorn app.main:app `
+uvicorn app.main:app `
     --env-file ./.env `
     --host 0.0.0.0 `
     --port 8000 `
@@ -24,7 +24,7 @@ uv run uvicorn app.main:app `
     --ssl-certfile ./certificates/cert.pem `
     --workers 4 `
     --reload
-``` -->
+```
 
 ### Docker
 
