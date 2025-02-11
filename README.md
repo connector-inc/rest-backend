@@ -28,7 +28,7 @@ uv run uvicorn app.main:app `
 
 ### Docker
 
-```
+```shell
 docker build -t rest-backend .
 docker run --name rest-backend -p 8000:8000 -d rest-backend
 ```
