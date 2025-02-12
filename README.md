@@ -22,11 +22,10 @@ uvicorn app.main:app `
     --port 8000 `
     --ssl-keyfile ./certificates/key.pem `
     --ssl-certfile ./certificates/cert.pem `
-    --workers 4 `
-    --reload
+    --workers 4
 ```
 
-### Docker
+#### Docker
 
 ```shell
 docker build -t rest-backend .
