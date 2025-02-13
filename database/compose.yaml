@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:latest
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=default
+      - POSTGRES_PASSWORD=postgres_password
+      - POSTGRES_DB=platform
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  redis-stack:
+    image: redis/redis-stack-server:latest
+    ports:
+      - "6379:6379"
+    environment:
+      - REDIS_ARGS=--requirepass redis_password
+    volumes:
+      - redis_data:/data
+    restart: always
+
+  # mongo:
+  #   image: mongo:latest
+  #   ports:
+  #     - '27017:27017'
+  #   environment:
+  #     - MONGO_INITDB_ROOT_USERNAME=default
+  #     - MONGO_INITDB_ROOT_PASSWORD=mongo_password
+  #   volumes:
+  #     - mongo_data:/data/db
+  #   restart: always
+
+volumes:
+  postgres_data:
+  redis_data:
+  # mongo_data:

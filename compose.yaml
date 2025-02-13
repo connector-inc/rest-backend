@@ -48,7 +48,3 @@ services:
   #   volumes:
   #     - redis_data:/data
   #   restart: always
-
-volumes:
-  postgres_data:
-  # redis_data:
