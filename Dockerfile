@@ -14,9 +14,9 @@ SHELL ["/bin/bash", "-c"]
 
 RUN python -m venv .venv
 RUN source ./.venv/bin/activate
-RUN pip install -r requirements.txt
+RUN python -m pip install -r requirements.txt
 
 EXPOSE $PORT
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
 
