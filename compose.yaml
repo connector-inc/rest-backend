@@ -1,26 +1,24 @@
 services:
-
   api:
     build: .
     restart: always
     # ports:
     # - "10001:10000" # HTTP only
     environment:
-      - PORT=10000 
+      - PORT=10000
     depends_on:
-      nginx:
+      proxy:
         condition: service_started
       postgres:
         condition: service_healthy
+      redis-stack:
+        condition: service_healthy
 
-  nginx:
-    image: nginx:latest
+  proxy:
+    build: ./proxy
     restart: always
     ports:
       - "10000:443" # HTTPS support
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
-      - ./certificates:/etc/nginx/certificates
 
   postgres:
     image: postgres:latest
@@ -39,12 +37,19 @@ services:
       timeout: 5s
       retries: 10
 
-  # redis-stack:
-  #   image: redis/redis-stack-server:latest
-  #   ports:
-  #     - "6379:6379"
-  #   environment:
-  #     - REDIS_ARGS=--requirepass redis_password
-  #   volumes:
-  #     - redis_data:/data
-  #   restart: always
+  redis-stack:
+    image: redis/redis-stack-server:latest
+    # ports:
+    #   - "6379:6379"
+    environment:
+      - REDIS_ARGS=--requirepass redis_password
+    volumes:
+      - redis_data:/data
+    restart: always
+    healthcheck:
+      test:
+        ["CMD", "redis-cli", "-a", "redis_password", "--raw", "incr", "ping"]
+
+volumes:
+  postgres_data:
+  redis_data:

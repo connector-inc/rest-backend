@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlmodel import select
 
 from app.database import SessionDep
@@ -15,34 +15,41 @@ router = APIRouter(
 
 @router.post(
     "/",
+    response_model=User,
     responses={
-        400: {"description": "Invalid request"},
-        409: {"description": "User already exists"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
+        status.HTTP_409_CONFLICT: {"description": "Conflict"},
     },
 )
-async def create_user(session: SessionDep, user: User):
+async def create_user(session: SessionDep, user_data: User):
     try:
+        user = User(**user_data.model_dump())
         session.add(user)
         await session.commit()
         await session.refresh(user)
         return user
     except ValueError as e:
-        raise HTTPException(status_code=400, detail={"message": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(e)}
+        )
     except Exception as e:
         await session.rollback()
         if "unique constraint" in str(e).lower():
             raise HTTPException(
-                status_code=409, detail={"message": "User already exists"}
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"message": "User already exists"},
             )
         raise HTTPException(
-            status_code=400, detail={"message": "Failed to create user"}
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Failed to create user"},
         )
 
 
 @router.get(
     "/",
+    response_model=list[User],
     responses={
-        400: {"description": "Invalid request"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
     },
 )
 async def read_users(
@@ -52,64 +59,76 @@ async def read_users(
         users = await session.execute(select(User).offset(offset).limit(limit))
         return users.scalars().all()
     except ValueError as e:
-        raise HTTPException(status_code=400, detail={"message": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(e)}
+        )
 
 
 @router.get(
     "/{user_id}",
+    response_model=User,
     responses={
-        400: {"description": "Invalid request"},
-        404: {"description": "User not found"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
+        status.HTTP_404_NOT_FOUND: {"description": "Not Found"},
     },
 )
 async def read_user(session: SessionDep, user_id: UUID):
     try:
-        result = await session.execute(select(User).where(User.id == user_id))
-        user = result.scalar()
+        user = await session.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail={"message": "User not found"})
         return user
     except ValueError as e:
-        raise HTTPException(status_code=400, detail={"message": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(e)}
+        )
 
 
 @router.put(
     "/{user_id}",
+    response_model=User,
     responses={
-        400: {"description": "Invalid request"},
-        404: {"description": "User not found"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
+        status.HTTP_404_NOT_FOUND: {"description": "Not Found"},
     },
 )
-async def update_user(session: SessionDep, user_id: UUID, user: User):
+async def update_user(session: SessionDep, user_id: UUID, user_data: User):
     try:
-        db_user = await session.get(User, user_id)
-        if not db_user:
+        user = await session.get(User, user_id)
+        if not user:
             raise HTTPException(status_code=404, detail={"message": "User not found"})
 
-        for key, value in user.model_dump(exclude={"id", "created_at"}).items():
-            setattr(db_user, key, value)
+        for key, value in user_data.model_dump().items():
+            setattr(user, key, value)
 
         await session.commit()
-        await session.refresh(db_user)
-        return db_user
+        await session.refresh(user)
+        return user
     except ValueError as e:
-        raise HTTPException(status_code=400, detail={"message": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(e)}
+        )
 
 
 @router.delete(
     "/{user_id}",
+    response_model=dict[str, str],
     responses={
-        400: {"description": "Invalid request"},
-        404: {"description": "User not found"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
+        status.HTTP_404_NOT_FOUND: {"description": "Not Found"},
     },
 )
 async def delete_user(session: SessionDep, user_id: UUID):
     try:
         user = await session.get(User, user_id)
         if not user:
-            raise HTTPException(status_code=404, detail={"message": "User not found"})
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail={"message": "User not found"}
+            )
         await session.delete(user)
         await session.commit()
         return {"message": "User deleted successfully"}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail={"message": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(e)}
+        )

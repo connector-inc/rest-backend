@@ -1,9 +1,12 @@
 # Use an official Python runtime as a parent image
 FROM python:3.11
 
-WORKDIR /app
+RUN adduser --disabled-password --gecos '' localuser
+USER localuser
 
-COPY . /app/
+WORKDIR /home/localuser/app
+
+COPY --chown=localuser:localuser . /home/localuser/app/
 
 # RUN mkdir certificates
 # RUN openssl genrsa -out certificates/key.pem 2048
@@ -14,9 +17,9 @@ SHELL ["/bin/bash", "-c"]
 
 RUN python -m venv .venv
 RUN source ./.venv/bin/activate
-RUN python -m pip install -r requirements.txt
+RUN python -m pip install --user .
 
 EXPOSE $PORT
 
-CMD ["sh", "-c", "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 2"]
 

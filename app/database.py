@@ -1,13 +1,16 @@
 from typing import Annotated
 
+import redis
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
-from app.config import settings
+from app.config import get_settings
 
+
+# PostgreSQL (asynchronous)
 async_engine = create_async_engine(
-    url=settings.database_url_async,
+    url=get_settings().database_url_async,
     echo=True,
     # Disable the PostgreSQL JIT to improve ENUM datatype handling
     # https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#disabling-the-postgresql-jit-to-improve-enum-datatype-handling
@@ -37,3 +40,7 @@ async def get_session():
 
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+
+# Redis
+r = redis.from_url(url=get_settings().redis_url)

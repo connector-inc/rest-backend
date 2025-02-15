@@ -1,6 +1,9 @@
 .venv/
 __pycache__/
-*.pyc
-certificates
-README.md
+
+alembic/
+proxy/
+
 LICENSE
+*.pyc
+uv.lock

@@ -1,29 +1,29 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
 from app.api.v1.internal import admin
-from app.api.v1.routers import users
-from app.config import settings
-from app.database import create_db_and_tables, drop_tables
-from app.dependencies import get_query_token
+from app.api.v1.routers import auth, users
+from app.config import get_settings
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await drop_tables()
-    await create_db_and_tables()
+    # from app.database import create_db_and_tables, drop_tables
+
+    # await drop_tables()
+    # await create_db_and_tables()
     yield
 
 
 app = FastAPI(
     title="Connector API",
-    openapi_url=settings.openapi_url,
-    root_path=settings.root_path,
-    dependencies=[Depends(get_query_token)],
+    openapi_url=get_settings().openapi_url,
+    root_path=get_settings().root_path,
+    # dependencies=[Depends(get_query_token)],
     lifespan=lifespan,
     default_response_class=ORJSONResponse,
 )
@@ -36,6 +36,7 @@ origins = [
     "https://www.connector.rocks",
 ]
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -46,16 +47,35 @@ app.add_middleware(
 
 
 app.include_router(admin.router)
-
 app.include_router(users.router)
+app.include_router(auth.router)
 
 
-# You can test it by modifying the root endpoint to:
-@app.get("/")
+@app.get("/", response_model=dict[str, str])
 async def root():
-    current_date, current_time = datetime.today().date(), datetime.today().time()
+    current_date, current_time = (
+        datetime.today().date().isoformat(),
+        datetime.today().time().isoformat(),
+    )
     return {
         "message": "Hello Connectors!",
         "currentDate": current_date,
         "currentTime": current_time,
     }
+
+
+# @app.exception_handler(RequestValidationError)
+# async def validation_exception_handler(request: Request, exc: RequestValidationError):
+#     """
+#     Custom exception handler for validation errors
+#     """
+#     return ORJSONResponse(
+#         status_code=422,
+#         content={
+#             "message": "Validation error",
+#             "details": [
+#                 {"loc": error["loc"], "message": error["message"], "type": error["type"]}
+#                 for error in exc.errors()
+#             ],
+#         },
+#     )
