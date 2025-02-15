@@ -5,7 +5,6 @@ import boto3
 import jwt
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import (
     AfterValidator,
@@ -49,7 +48,12 @@ def generate_login_token(email: str):
         "exp": datetime.now(timezone.utc)
         + timedelta(minutes=LOGIN_TOKEN_EXPIRATION_MINUTES),
     }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+    redis.setex(f"login:{email}", LOGIN_TOKEN_EXPIRATION_MINUTES * 60, token)
+
+    return token
 
 
 def generate_access_token(email: str):
@@ -58,7 +62,11 @@ def generate_access_token(email: str):
         "exp": datetime.now(timezone.utc)
         + timedelta(hours=ACCESS_TOKEN_EXPIRATION_HOURS),
     }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+    redis.setex(f"access:{email}", ACCESS_TOKEN_EXPIRATION_HOURS * 60 * 60, token)
+
+    return token
 
 
 def generate_refresh_token(email: str):
@@ -67,15 +75,11 @@ def generate_refresh_token(email: str):
         "exp": datetime.now(timezone.utc)
         + timedelta(days=REFRESH_TOKEN_EXPIRATION_DAYS),
     }
-    refresh_token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-    redis.setex(
-        f"refresh:{email}",
-        REFRESH_TOKEN_EXPIRATION_DAYS * 24 * 60 * 60,
-        refresh_token,
-    )
+    redis.setex(f"refresh:{email}", REFRESH_TOKEN_EXPIRATION_DAYS * 24 * 60 * 60, token)
 
-    return refresh_token
+    return token
 
 
 def verify_token(token: str = Depends(oauth2_scheme)):
@@ -122,7 +126,6 @@ async def request_login(background_tasks: BackgroundTasks, request: LoginRequest
     try:
         email = request.email
         token = generate_login_token(email)
-        redis.setex(f"login:{email}", LOGIN_TOKEN_EXPIRATION_MINUTES * 60, token)
         background_tasks.add_task(send_verification_email, email, token)
         return {"message": "Login email sent"}
 
@@ -141,14 +144,19 @@ async def request_login(background_tasks: BackgroundTasks, request: LoginRequest
         )
 
 
-@router.get(
+class VerifyRequest(BaseModel):
+    token: str
+
+
+@router.post(
     "/verify",
     responses={
         status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
         status.HTTP_500_INTERNAL_SERVER_ERROR: {"description": "Internal Server Error"},
     },
 )
-async def verify(token: str):
+async def verify(request: VerifyRequest):
+    token = request.token
     email = verify_token(token)
     is_token = redis.get(f"login:{email}") == token
 
@@ -157,29 +165,33 @@ async def verify(token: str):
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token"
         )
 
-    redis.delete(f"login:{token}")
+    redis.delete(f"login:{email}")
 
     access_token = generate_access_token(email)
     refresh_token = generate_refresh_token(email)
 
-    response = RedirectResponse(url=f"{WEB_APP_URL}/")
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        max_age=ACCESS_TOKEN_EXPIRATION_HOURS * 60 * 60,
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        max_age=REFRESH_TOKEN_EXPIRATION_DAYS * 24 * 60 * 60,
-    )
-    return response
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+    }
+    # response = RedirectResponse(url=f"{WEB_APP_URL}/")
+    # response.set_cookie(
+    #     key="access_token",
+    #     value=access_token,
+    #     httponly=True,
+    #     secure=True,
+    #     samesite="lax",
+    #     max_age=ACCESS_TOKEN_EXPIRATION_HOURS * 60 * 60,
+    # )
+    # response.set_cookie(
+    #     key="refresh_token",
+    #     value=refresh_token,
+    #     httponly=True,
+    #     secure=True,
+    #     samesite="lax",
+    #     max_age=REFRESH_TOKEN_EXPIRATION_DAYS * 24 * 60 * 60,
+    # )
+    # return response
 
 
 # async def get_access_token(request: Request):

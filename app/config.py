@@ -6,7 +6,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     openapi_url: str = ""
-    root_path: str = ""
 
     database_url: str = ""
     database_url_async: str = ""

@@ -12,17 +12,16 @@ from app.config import get_settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from app.database import create_db_and_tables, drop_tables
+    # from app.database import create_db_and_tables, drop_tables
 
-    await drop_tables()
-    await create_db_and_tables()
+    # await drop_tables()
+    # await create_db_and_tables()
     yield
 
 
 app = FastAPI(
     title="Connector API",
     openapi_url=get_settings().openapi_url,
-    root_path=get_settings().root_path,
     # dependencies=[Depends(get_query_token)],
     lifespan=lifespan,
     default_response_class=ORJSONResponse,
