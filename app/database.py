@@ -29,7 +29,7 @@ async def drop_tables():
         await connection.run_sync(SQLModel.metadata.drop_all)
 
 
-async def create_db_and_tables():
+async def create_tables():
     async with async_engine.begin() as connection:
         await connection.run_sync(SQLModel.metadata.create_all)
 

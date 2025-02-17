@@ -12,17 +12,16 @@ from app.config import get_settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # from app.database import create_db_and_tables, drop_tables
+    from app.database import create_tables, drop_tables
 
-    # await drop_tables()
-    # await create_db_and_tables()
+    await drop_tables()
+    await create_tables()
     yield
 
 
 app = FastAPI(
     title="Connector API",
     openapi_url=get_settings().openapi_url,
-    # dependencies=[Depends(get_query_token)],
     lifespan=lifespan,
     default_response_class=ORJSONResponse,
 )
@@ -52,14 +51,9 @@ app.include_router(auth.router)
 
 @app.get("/", response_model=dict[str, str])
 async def root():
-    current_date, current_time = (
-        datetime.today().date().isoformat(),
-        datetime.today().time().isoformat(),
-    )
     return {
         "message": "Hello Connectors!",
-        "currentDate": current_date,
-        "currentTime": current_time,
+        "current_date": datetime.today().isoformat(),
     }
 
 

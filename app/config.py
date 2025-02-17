@@ -16,10 +16,10 @@ class Settings(BaseSettings):
 
     web_app_url: str = "http://localhost:3000"
 
-    aws_access_key_id: str = ""
-    aws_secret_access_key: str = ""
-    aws_region_name: str = ""
+    resend_api_key: str = ""
     sender_email: EmailStr = ""
+
+    cookie_domain: str = "localhost"
 
     model_config = SettingsConfigDict(
         env_file=(".env"),

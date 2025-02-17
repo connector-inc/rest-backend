@@ -1,10 +1,18 @@
 from datetime import datetime, timedelta, timezone
+import json
 from typing import Annotated
+from uuid import uuid4
 
-import boto3
+from fastapi.responses import RedirectResponse
 import jwt
-from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+import resend
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    status,
+)
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import (
     AfterValidator,
@@ -12,72 +20,37 @@ from pydantic import (
     EmailStr,
     ValidationError,
 )
+import resend.exceptions
 
 from app.config import get_settings
 from app.database import r as redis
 from app.validators import email_validator
 
-AWS_REGION_NAME = get_settings().aws_region_name
-AWS_ACCESS_KEY_ID = get_settings().aws_access_key_id
-AWS_SECRET_ACCESS_KEY = get_settings().aws_secret_access_key
-SES_SENDER_EMAIL = get_settings().sender_email
 
 JWT_SECRET_KEY = get_settings().jwt_secret_key
 JWT_ALGORITHM = "HS256"
 
 WEB_APP_URL = get_settings().web_app_url
 
-LOGIN_TOKEN_EXPIRATION_MINUTES = 30
-ACCESS_TOKEN_EXPIRATION_HOURS = 1
-REFRESH_TOKEN_EXPIRATION_DAYS = 7
+VERIFICATION_EMAIL_EXPIRATION_MINUTES = 30
+SESSION_EXPIRATION_DAYS = 7
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
-ses_client = boto3.client(
-    "ses",
-    region_name=AWS_REGION_NAME,
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-)
+resend.api_key = get_settings().resend_api_key
 
 
 def generate_login_token(email: str):
     payload = {
         "sub": email,
         "exp": datetime.now(timezone.utc)
-        + timedelta(minutes=LOGIN_TOKEN_EXPIRATION_MINUTES),
+        + timedelta(minutes=VERIFICATION_EMAIL_EXPIRATION_MINUTES),
     }
 
     token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
-    redis.setex(f"login:{email}", LOGIN_TOKEN_EXPIRATION_MINUTES * 60, token)
-
-    return token
-
-
-def generate_access_token(email: str):
-    payload = {
-        "sub": email,
-        "exp": datetime.now(timezone.utc)
-        + timedelta(hours=ACCESS_TOKEN_EXPIRATION_HOURS),
-    }
-    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-
-    redis.setex(f"access:{email}", ACCESS_TOKEN_EXPIRATION_HOURS * 60 * 60, token)
-
-    return token
-
-
-def generate_refresh_token(email: str):
-    payload = {
-        "sub": email,
-        "exp": datetime.now(timezone.utc)
-        + timedelta(days=REFRESH_TOKEN_EXPIRATION_DAYS),
-    }
-    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-
-    redis.setex(f"refresh:{email}", REFRESH_TOKEN_EXPIRATION_DAYS * 24 * 60 * 60, token)
+    redis.setex(f"login:{email}", VERIFICATION_EMAIL_EXPIRATION_MINUTES * 60, token)
 
     return token
 
@@ -87,25 +60,28 @@ def verify_token(token: str = Depends(oauth2_scheme)):
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         return payload["sub"]
     except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail={"message": "Invalid token"})
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token."
+        )
 
 
 def send_verification_email(to_email: str, token: str):
     try:
         login_url = f"{WEB_APP_URL}/auth/verify?token={token}"
-        subject = "Log in to Connector"
-        body = f"Click the link below to log in:\n\n{login_url}\n\nThis link will expire in {LOGIN_TOKEN_EXPIRATION_MINUTES} minutes."
+        html = f"<p>Click the link below to log in:</p><br/><p><a href={login_url}>{login_url}</a></p><br/><p>This link will expire in {VERIFICATION_EMAIL_EXPIRATION_MINUTES} minutes.</p>"
 
-        ses_client.send_email(
-            Source=SES_SENDER_EMAIL,
-            Destination={"ToAddresses": [to_email]},
-            Message={
-                "Subject": {"Data": subject},
-                "Body": {"Text": {"Data": body}},
-            },
+        params: resend.Emails.SendParams = {
+            "from": f"Connector <{get_settings().sender_email}>",
+            "to": [to_email],
+            "subject": "Log in to Connector",
+            "html": html,
+        }
+        resend.Emails.send(params)
+    except resend.exceptions.ResendError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Email sending failed.",
         )
-    except (BotoCoreError, NoCredentialsError):
-        raise HTTPException(status_code=500, detail="Email sending failed.")
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -122,7 +98,7 @@ class LoginRequest(BaseModel):
         status.HTTP_500_INTERNAL_SERVER_ERROR: {"description": "Internal Server Error"},
     },
 )
-async def request_login(background_tasks: BackgroundTasks, request: LoginRequest):
+async def request_login(request: LoginRequest, background_tasks: BackgroundTasks):
     try:
         email = request.email
         token = generate_login_token(email)
@@ -130,68 +106,57 @@ async def request_login(background_tasks: BackgroundTasks, request: LoginRequest
         return {"message": "Login email sent"}
 
     except ValidationError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(e)}
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(e)}
-        )
-    except (BotoCoreError, NoCredentialsError, ClientError):
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"message": "Failed to send email"},
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-class VerifyRequest(BaseModel):
-    token: str
-
-
-@router.post(
+@router.get(
     "/verify",
-    responses={
-        status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
-        status.HTTP_500_INTERNAL_SERVER_ERROR: {"description": "Internal Server Error"},
-    },
+    # responses={
+    #     status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
+    #     status.HTTP_500_INTERNAL_SERVER_ERROR: {"description": "Internal Server Error"},
+    # },
 )
-async def verify(request: VerifyRequest):
-    token = request.token
+async def verify(token: str):
     email = verify_token(token)
-    is_token = redis.get(f"login:{email}") == token
+    is_valid_token = redis.get(f"login:{email}") == token
 
-    if not is_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token"
-        )
+    if not is_valid_token:
+        # raise HTTPException(
+        #     status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid token."
+        # )
+        response = RedirectResponse(url=f"{WEB_APP_URL}/login?error=invalid_token")
+        return response
 
     redis.delete(f"login:{email}")
 
-    access_token = generate_access_token(email)
-    refresh_token = generate_refresh_token(email)
+    session_id = str(uuid4())
+    redis.setex(
+        f"session:{session_id}",
+        SESSION_EXPIRATION_DAYS * 24 * 60 * 60,
+        json.dumps(
+            {
+                "user_email": email,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_active": datetime.now(timezone.utc).isoformat(),
+            }
+        ),
+    )
 
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-    }
-    # response = RedirectResponse(url=f"{WEB_APP_URL}/")
-    # response.set_cookie(
-    #     key="access_token",
-    #     value=access_token,
-    #     httponly=True,
-    #     secure=True,
-    #     samesite="lax",
-    #     max_age=ACCESS_TOKEN_EXPIRATION_HOURS * 60 * 60,
-    # )
-    # response.set_cookie(
-    #     key="refresh_token",
-    #     value=refresh_token,
-    #     httponly=True,
-    #     secure=True,
-    #     samesite="lax",
-    #     max_age=REFRESH_TOKEN_EXPIRATION_DAYS * 24 * 60 * 60,
-    # )
-    # return response
+    response = RedirectResponse(url=f"{WEB_APP_URL}/")
+
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        max_age=365 * 24 * 60 * 60,  # 365 days
+        samesite="strict",
+        httponly=True,
+        secure=True,
+        domain=get_settings().cookie_domain,
+    )
+
+    return response
 
 
 # async def get_access_token(request: Request):

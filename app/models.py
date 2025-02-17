@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
@@ -19,10 +19,15 @@ from app.validators import email_validator
 
 
 class UserStatus(str, enum.Enum):
-    verified = "verified"
-    unverified = "unverified"
+    active = "active"
     deactivated = "deactivated"
     deleted = "deleted"
+
+
+class UserGender(str, enum.Enum):
+    male = "male"
+    female = "female"
+    prefer_not_to_say = "prefer_not_to_say"
 
 
 class User(SQLModel, table=True):
@@ -30,54 +35,27 @@ class User(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     created_at: datetime = Field(
-        default=datetime.today(),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        default=datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True))
     )
-
-    email: Annotated[
-        EmailStr,
-        AfterValidator(email_validator),
-    ] = Field(sa_column=Column(String, index=True, unique=True))
-
-    username: Optional[str] = Field(default=None, index=True, unique=True)
-    full_name: Optional[str] = Field(default=None)
     status: UserStatus = Field(
-        default=UserStatus.unverified,
+        default=UserStatus.active,
         sa_column=Column(Enum(UserStatus, name="user_status")),
     )
 
-    threads: list["Thread"] = Relationship(back_populates="user")
+    email: Annotated[EmailStr, AfterValidator(email_validator)] = Field(
+        sa_column=Column(String, index=True, unique=True)
+    )
+    username: Optional[str] = Field(default=None, index=True, unique=True)
+    name: Optional[str] = Field(default=None)
+    gender: Optional[UserGender] = Field(
+        default=None, sa_column=Column(Enum(UserGender, name="user_gender"))
+    )
+    profile_picture: Optional[str] = Field(default=None)
+    bio: Optional[str] = Field(default=None)
+    is_private: bool = Field(default=False)
+
+    threads: list["Thread"] = Relationship(back_populates="user", cascade_delete=True)
     replies: list["Reply"] = Relationship(back_populates="user", cascade_delete=True)
-
-
-# class UserBase(SQLModel):
-#     full_name: str
-#     email: EmailStr
-#     username: str
-
-#     @field_validator("email")
-#     def validate_email(cls, email: str) -> str:
-#         BLACKLISTED_DOMAINS = ["tempmail.com", "disposable.com"]
-#         MAX_EMAIL_LENGTH = 254  # RFC 5321
-#         MIN_EMAIL_LENGTH = 3
-
-#         # Check email length
-#         if len(email) > MAX_EMAIL_LENGTH:
-#             raise ValueError(f"Email must be less than {MAX_EMAIL_LENGTH} characters")
-#         if len(email) < MIN_EMAIL_LENGTH:
-#             raise ValueError(f"Email must be at least {MIN_EMAIL_LENGTH} characters")
-
-#         # Basic format validation using regex
-#         email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-#         if not re.match(email_regex, email):
-#             raise ValueError("Invalid email format")
-
-#         # Check domain not blacklisted
-#         domain = email.split("@")[1].lower()
-#         if domain in BLACKLISTED_DOMAINS:
-#             raise ValueError("Email domain not allowed")
-
-#         return email.lower()
 
 
 class Thread(SQLModel, table=True):
@@ -85,12 +63,10 @@ class Thread(SQLModel, table=True):
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     created_at: datetime = Field(
-        default=datetime.today(),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        default=datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True))
     )
     updated_at: datetime = Field(
-        default=datetime.today(),
-        sa_column=Column(DateTime(timezone=True), nullable=False),
+        default=datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True))
     )
 
     content: str = Field(index=True)
@@ -108,7 +84,9 @@ class Reply(SQLModel, table=True):
     __tablename__: str = "replies"  # type: ignore
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    created_at: datetime = Field(default=datetime.today(), sa_column=Column(DateTime))
+    created_at: datetime = Field(
+        default=datetime.today(), sa_column=Column(DateTime(timezone=True))
+    )
 
     content: str = Field(index=True)
     media: list[str] = Field(sa_column=Column(ARRAY(String)))
