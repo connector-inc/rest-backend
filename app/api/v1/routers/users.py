@@ -4,10 +4,13 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlmodel import select
 
-from app.database import SessionDep, r as redis
+from app.config import get_settings
+from app.database import SessionDep
+from app.database import r as redis
 from app.models import User, UserGender
 
 router = APIRouter(
@@ -20,23 +23,26 @@ async def get_current_user_email(request: Request):
     try:
         session_id = request.cookies.get("session_id")
         if not session_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
-            )
+            return RedirectResponse(url=f"{get_settings().web_app_url}/login")
+            # raise HTTPException(
+            #     status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
+            # )
 
         session_value = json.loads(redis.get(f"session:{session_id}"))  # type: ignore
         if not session_value:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
-            )
+            return RedirectResponse(url=f"{get_settings().web_app_url}/login")
+            # raise HTTPException(
+            #     status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
+            # )
 
         email = session_value.get("user_email")
         return email
     except Exception as e:
         logging.error(e)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
-        )
+        return RedirectResponse(url=f"{get_settings().web_app_url}/login")
+        # raise HTTPException(
+        #     status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
+        # )
 
 
 class CreateUserRequest(BaseModel):
@@ -63,6 +69,8 @@ async def create_user(
         user = User(email=email)
         user.name = request.name
         user.username = request.username
+        if request.gender not in UserGender.__members__:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="")
         user.gender = UserGender[request.gender]
 
         db_session.add(user)
@@ -82,6 +90,28 @@ async def create_user(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create user."
         )
+
+
+class CheckUsernameAvailabilityRequest(BaseModel):
+    username: str
+
+
+@router.post("/username")
+async def check_username_availability(
+    db_session: SessionDep,
+    request: CheckUsernameAvailabilityRequest,
+    email: str = Depends(get_current_user_email),
+):
+    try:
+        username_exists = await db_session.execute(
+            select(User).where(User.username == request.username)
+        )
+        if username_exists.scalars().first():
+            return {"message": "Username already exists."}
+        return {"message": "Username is available."}
+    except Exception as e:
+        logging.error(e)
+        return {"message": "Failed to check username."}
 
 
 @router.get(

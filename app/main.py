@@ -12,10 +12,10 @@ from app.config import get_settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from app.database import create_tables, drop_tables
+    # from app.database import create_tables, drop_tables
 
-    await drop_tables()
-    await create_tables()
+    # await drop_tables()
+    # await create_tables()
     yield
 
 
