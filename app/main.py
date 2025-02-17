@@ -1,7 +1,8 @@
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
 
@@ -55,6 +56,15 @@ async def root():
         "message": "Hello Connectors!",
         "current_date": datetime.today().isoformat(),
     }
+
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    process_time = time.perf_counter() - start_time
+    response.headers["X-Process-Time"] = str(process_time)
+    return response
 
 
 # @app.exception_handler(RequestValidationError)

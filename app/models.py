@@ -45,8 +45,8 @@ class User(SQLModel, table=True):
     email: Annotated[EmailStr, AfterValidator(email_validator)] = Field(
         sa_column=Column(String, index=True, unique=True)
     )
-    username: Optional[str] = Field(default=None, index=True, unique=True)
-    name: Optional[str] = Field(default=None)
+    username: Optional[str] = Field(default=None, index=True, unique=True, min_length=3)
+    name: Optional[str] = Field(default=None, min_length=3, max_length=30)
     gender: Optional[UserGender] = Field(
         default=None, sa_column=Column(Enum(UserGender, name="user_gender"))
     )

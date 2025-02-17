@@ -13,12 +13,15 @@ class Settings(BaseSettings):
     redis_url: str = ""
 
     jwt_secret_key: str = ""
+    jwt_algorithm: str = "HS256"
 
     web_app_url: str = "http://localhost:3000"
 
     resend_api_key: str = ""
     sender_email: EmailStr = ""
 
+    verification_email_expiry_minutes: int = 30
+    session_expiry_days: int = 7
     cookie_domain: str = "localhost"
 
     model_config = SettingsConfigDict(
