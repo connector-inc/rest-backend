@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from app.database import SessionDep
-from app.dependencies import get_current_user_email
+from app.dependencies import get_current_user
 from app.models import User, UserGender
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -34,9 +34,10 @@ class CreateUserRequest(BaseModel):
 async def create_user(
     db_session: SessionDep,
     request: CreateUserRequest,
-    email: str = Depends(get_current_user_email),
+    current_user=Depends(get_current_user),
 ):
     try:
+        email = current_user["email"]
         user = User(email=email)
         user.name = request.name
         user.username = request.username
@@ -45,22 +46,22 @@ async def create_user(
         db_session.add(user)
         await db_session.commit()
         await db_session.refresh(user)
+
         return {"message": "User created successfully"}
+    except HTTPException as e:
+        raise e
     except ValueError as e:
         logging.error(e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except HTTPException as e:
-        logging.error(e)
-        raise e
     except Exception as e:
         logging.error(e)
         await db_session.rollback()
         if "unique constraint" in str(e).lower():
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="User already exists."
+                status_code=status.HTTP_409_CONFLICT, detail="User already exists"
             )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create user."
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create user"
         )
 
 
@@ -78,28 +79,26 @@ class CheckUsernameAvailabilityRequest(BaseModel):
 async def check_username_availability(
     db_session: SessionDep,
     request: CheckUsernameAvailabilityRequest,
-    _=Depends(get_current_user_email),
+    _=Depends(get_current_user),
 ):
     try:
         username_exists = await db_session.execute(
             select(User).where(User.username == request.username)
         )
         if username_exists.scalars().first():
-            return {"message": "Username already exists."}
-        return {"message": "Username is available."}
+            return {"message": "Username already exists"}
+        return {"message": "Username is available"}
     except HTTPException as e:
-        logging.error(e)
         raise e
     except Exception as e:
         logging.error(e)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to check username."
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to check username"
         )
 
 
 # @router.get(
-#     "/me",
-#     status_code=status.HTTP_204_NO_CONTENT,
+#     "/",
 #     responses={
 #         status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
 #         status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
@@ -108,22 +107,23 @@ async def check_username_availability(
 # )
 # async def read_me(
 #     db_session: SessionDep,
-#     email: str = Depends(get_current_user_email),
+#     email: str = Depends(get_current_user),
 # ):
 #     try:
-#         user = await db_session.execute(select(User).where(User.email == email))
-#         if user.scalars().first():
-#             return Response(status_code=status.HTTP_204_NO_CONTENT)
-#         raise HTTPException(
-#             status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
-#         )
+#         query = await db_session.execute(select(User).where(User.email == email))
+#         user = query.scalars().first()
+#         if not user:
+#             print("User not found")
+#             raise HTTPException(
+#                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+#             )
+#         return {"user": user}
 #     except HTTPException as e:
-#         logging.error(e)
 #         raise e
 #     except Exception as e:
 #         logging.error(e)
 #         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to get user."
+#             status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to get user"
 #         )
 
 
