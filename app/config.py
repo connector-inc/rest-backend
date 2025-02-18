@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     openapi_url: str = ""
+    environment: str = "development"
 
     database_url: str = ""
     database_url_async: str = ""
