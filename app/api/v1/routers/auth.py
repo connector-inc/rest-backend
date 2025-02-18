@@ -25,7 +25,7 @@ from sqlmodel import select
 from app.config import get_settings
 from app.database import SessionDep
 from app.database import r as redis
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_query_parameters
 from app.jwt import (
     create_access_token,
     create_login_token,
@@ -76,12 +76,6 @@ async def request_login(request: LoginRequest, background_tasks: BackgroundTasks
     try:
         email = request.email
         token = create_login_token(email)
-        background_tasks.add_task(
-            redis.setex,
-            f"login:{email}",
-            get_settings().verification_email_expiry_minutes * 60,
-            token,
-        )
         background_tasks.add_task(send_verification_email, email, token)
         return {"message": "Login email sent"}  # Keep this line
     except ValidationError or ValueError as e:
@@ -99,20 +93,17 @@ async def verify(token: str, response: Response, background_tasks: BackgroundTas
     try:
         payload = decode_jwt(token)
         email = payload.get("sub")
-        is_valid_token = redis.get(f"login:{email}") == token
-
-        if not is_valid_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
-            )
-
-        background_tasks.add_task(redis.delete, f"login:{email}")
 
         access_token = create_access_token(data={"sub": email})  # Keep "sub"
         refresh_token = create_refresh_token(subject=email)
 
         # Store the refresh token in Redis (with jti as key)
-        background_tasks.add_task(redis.set, f"refresh:{refresh_token}", "valid")
+        background_tasks.add_task(
+            redis.setex,
+            f"refresh:{refresh_token}",
+            get_settings().refresh_token_expiry_days * 24 * 60 * 60,
+            "valid",
+        )
 
         # Set cookies
         response = RedirectResponse(url=f"{get_settings().web_app_url}/")
@@ -158,7 +149,7 @@ class RefreshRequest(BaseModel):
     },
 )
 async def refresh(
-    request: Request,
+    request: RefreshRequest,
     response: Response,
     background_tasks: BackgroundTasks,
 ):
@@ -174,8 +165,9 @@ async def refresh(
     #         detail="Too many refresh attempts. Please try again later.",
     #     )
 
-    refresh_token = request.cookies.get("refresh_token")
+    refresh_token = request.refresh_token
     if not refresh_token:
+        print("Missing refresh token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token"
         )
@@ -184,14 +176,15 @@ async def refresh(
         payload = decode_jwt_without_exception(refresh_token)
         email = payload.get("sub")
         if email is None:
+            print("Invalid refresh token")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
             )
 
         # Check if the refresh token is valid (exists in Redis)
         session_state = redis.get(f"refresh:{refresh_token}")
-        print(session_state)
         if session_state != "valid":
+            print("Invalid refresh token")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
             )
@@ -205,8 +198,11 @@ async def refresh(
         new_refresh_token = create_refresh_token(subject=email)
 
         background_tasks.add_task(
-            redis.set, f"refresh:{new_refresh_token}", "valid"
-        )  # Store the new refresh token
+            redis.setex,
+            f"refresh:{new_refresh_token}",
+            get_settings().refresh_token_expiry_days * 24 * 60 * 60,
+            "valid",
+        )
 
         # response = Response(content=json.dumps({"access_token": new_access_token}))
         response.set_cookie(
@@ -231,10 +227,12 @@ async def refresh(
         return {"message": "Access token refreshed"}
 
     except jwt.ExpiredSignatureError:
+        print("Token has expired")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired"
         )
     except jwt.InvalidTokenError:
+        print("Invalid token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
         )
@@ -258,7 +256,7 @@ async def logout(
 @router.get("/me")
 async def read_users_me(
     db_session: SessionDep,
-    current_user: dict[str, str] = Depends(get_current_user),
+    current_user: dict[str, str] = Depends(get_current_user_query_parameters),
 ):
     email = current_user["email"]
     query = await db_session.execute(select(User).where(User.email == email))

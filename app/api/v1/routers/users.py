@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from app.database import SessionDep
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_cookies
 from app.models import User, UserGender
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -34,7 +34,7 @@ class CreateUserRequest(BaseModel):
 async def create_user(
     db_session: SessionDep,
     request: CreateUserRequest,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_cookies),
 ):
     try:
         email = current_user["email"]
@@ -79,7 +79,7 @@ class CheckUsernameAvailabilityRequest(BaseModel):
 async def check_username_availability(
     db_session: SessionDep,
     request: CheckUsernameAvailabilityRequest,
-    _=Depends(get_current_user),
+    _=Depends(get_current_user_cookies),
 ):
     try:
         username_exists = await db_session.execute(
