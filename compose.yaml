@@ -1,55 +1,19 @@
 services:
-  api:
+  fastapi:
     build: .
     restart: always
-    # ports:
-    # - "10001:10000" # HTTP only
+    ports:
+      - "10000:10000"
     environment:
       - PORT=10000
-    depends_on:
-      proxy:
-        condition: service_started
-      postgres:
-        condition: service_healthy
-      redis-stack:
-        condition: service_healthy
-
-  proxy:
-    build: ./proxy
-    restart: always
-    ports:
-      - "10000:443" # HTTPS support
-
-  postgres:
-    image: postgres:latest
-    restart: always
-    # ports:
-    #   - "5432:5432"
-    environment:
-      - POSTGRES_USER=default
-      - POSTGRES_PASSWORD=postgres_password
-      - POSTGRES_DB=platform
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready"]
-      interval: 1s
-      timeout: 5s
-      retries: 10
-
-  redis-stack:
-    image: redis/redis-stack-server:latest
-    # ports:
-    #   - "6379:6379"
-    environment:
-      - REDIS_ARGS=--requirepass redis_password
-    volumes:
-      - redis_data:/data
-    restart: always
-    healthcheck:
-      test:
-        ["CMD", "redis-cli", "-a", "redis_password", "--raw", "incr", "ping"]
-
-volumes:
-  postgres_data:
-  redis_data:
+      - OPENAPI_URL=/openapi.json
+      - ENVIRONMENT=production
+      - DATABASE_URL_ASYNC=
+      - REDIS_URL=
+      - JWT_ALGORITHM=RS256
+      - JWT_PRIVATE_KEY=
+      - JWT_PUBLIC_KEY=
+      - WEB_APP_URL=https://www.connector.rocks
+      - RESEND_API_KEY=
+      - SENDER_EMAIL=
+      - COOKIE_DOMAIN=.connector.rocks
