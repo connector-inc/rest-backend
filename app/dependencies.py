@@ -1,65 +1,57 @@
-import jwt
-from fastapi import HTTPException, Request, status
+from fastapi import (
+    Depends,
+    HTTPException,
+    Request,
+    status,
+)
+from pydantic import EmailStr
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
-from app.jwt import decode_jwt_without_exception
+from app.database import get_session
+from app.database import r as redis
+from app.models import User
 
 
-async def get_current_user_cookies(request: Request):
-    access_token = request.cookies.get("access_token")
-    if not access_token:
+async def get_current_user(
+    request: Request,
+    db: AsyncSession = Depends(get_session),
+) -> User:
+    session_id = request.cookies.get("session_id")
+    if not session_id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing access token",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
         )
 
-    try:
-        payload = decode_jwt_without_exception(access_token)
-        email: str = payload.get("sub")
-        if email is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token"
-            )
-        user = {"email": email}
-        return user
-
-    except jwt.ExpiredSignatureError:
+    user_email = redis.get(f"session:{session_id}")
+    if not user_email:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired"
         )
 
-
-async def get_current_user_query_parameters(access_token: str):
-    if not access_token:
+    user_query = await db.execute(select(User).where(User.email == user_email))
+    user = user_query.scalars().first()
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing access token",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
         )
 
-    try:
-        payload = decode_jwt_without_exception(access_token)
-        email: str = payload.get("sub")
-        if email is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token"
-            )
-        user = {"email": email}
-        return user
+    return user
 
-    except jwt.ExpiredSignatureError:
+
+async def get_current_user_email(
+    request: Request,
+) -> EmailStr:
+    session_id = request.cookies.get("session_id")
+    if not session_id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Access token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
         )
-    except jwt.InvalidTokenError:
+
+    user_email = redis.get(f"session:{session_id}")
+    if not user_email:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired"
         )
+
+    return str(user_email)

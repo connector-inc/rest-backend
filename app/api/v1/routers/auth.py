@@ -1,7 +1,7 @@
 import logging
+import uuid
 from typing import Annotated
 
-import jwt
 import resend
 import resend.exceptions
 from fastapi import (
@@ -18,20 +18,14 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     EmailStr,
-    ValidationError,
 )
-from sqlmodel import select
 
 from app.config import get_settings
-from app.database import SessionDep
 from app.database import r as redis
-from app.dependencies import get_current_user_query_parameters
+from app.dependencies import get_current_user, get_current_user_email
 from app.jwt import (
-    create_access_token,
     create_login_token,
-    create_refresh_token,
     decode_jwt,
-    decode_jwt_without_exception,
 )
 from app.models import User
 from app.validators import email_validator
@@ -72,195 +66,108 @@ class LoginRequest(BaseModel):
         status.HTTP_500_INTERNAL_SERVER_ERROR: {"description": "Internal Server Error"},
     },
 )
-async def request_login(request: LoginRequest, background_tasks: BackgroundTasks):
+async def login(request: LoginRequest, background_tasks: BackgroundTasks):
     try:
         email = request.email
         token = create_login_token(email)
+        background_tasks.add_task(
+            redis.setex,
+            f"login:{email}",
+            get_settings().verification_email_expiry_minutes * 60,
+            token,
+        )
         background_tasks.add_task(send_verification_email, email, token)
-        return {"message": "Login email sent"}  # Keep this line
-    except ValidationError or ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        return {"message": "Successfully sent verification email"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Failed to send verification email: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to send verification email",
+        )
 
 
 @router.get(
     "/verify",
     responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
         status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
-        status.HTTP_500_INTERNAL_SERVER_ERROR: {"description": "Internal Server Error"},
     },
 )
 async def verify(token: str, response: Response, background_tasks: BackgroundTasks):
     try:
+        # Validate and decode JWT token
         payload = decode_jwt(token)
-        email = payload.get("sub")
+        if not payload or "sub" not in payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+            )
 
-        access_token = create_access_token(data={"sub": email})  # Keep "sub"
-        refresh_token = create_refresh_token(subject=email)
+        email = payload["sub"]
+        redis_token = redis.get(f"login:{email}")
+        if not redis_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token expired",
+            )
 
-        # Store the refresh token in Redis (with jti as key)
+        background_tasks.add_task(redis.delete, f"login:{email}")
+
+        session_id = str(uuid.uuid4())
+        session_expiry = get_settings().session_expiry_days * 24 * 60 * 60
+
+        # Create session in Redis
         background_tasks.add_task(
             redis.setex,
-            f"refresh:{refresh_token}",
-            get_settings().refresh_token_expiry_days * 24 * 60 * 60,
-            "valid",
+            f"session:{session_id}",
+            session_expiry,
+            email,
         )
 
-        # Set cookies
-        response = RedirectResponse(url=f"{get_settings().web_app_url}/")
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=True,
-            samesite="strict",
-            max_age=get_settings().access_token_expiry_minutes * 60,
-            domain=get_settings().cookie_domain,
+        # Create redirect response with session cookie
+        response = RedirectResponse(
+            url=f"{get_settings().web_app_url}/",
+            status_code=status.HTTP_302_FOUND,
         )
         response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
+            key="session_id",
+            value=session_id,
             httponly=True,
             secure=True,
             samesite="strict",
-            max_age=get_settings().refresh_token_expiry_days * 24 * 60 * 60,
+            max_age=session_expiry,
             domain=get_settings().cookie_domain,
         )
 
         return response
-    except HTTPException as e:
-        raise e
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"Unexpected error during verification: {str(e)}")
+        logging.error(f"Failed to verify token: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred",
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to verify token"
         )
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str
-
-
-@router.post(
-    "/refresh",
-    responses={
-        status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
-        status.HTTP_429_TOO_MANY_REQUESTS: {"description": "Too Many Requests"},
-    },
-)
-async def refresh(
-    request: RefreshRequest,
+@router.post("/logout")
+async def logout(
+    request: Request,
     response: Response,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
 ):
-    # Rate limiting
-    # client_ip = request.client.host
-    # rate_limit_key = f"rate_limit:refresh:{client_ip}"
-    # current_attempts = redis.incr(rate_limit_key)
-    # if current_attempts == 1:
-    #     redis.expire(rate_limit_key, 60)  # Set 60 seconds expiry
-    # if current_attempts > 5:  # Max 5 attempts per minute
-    #     raise HTTPException(
-    #         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-    #         detail="Too many refresh attempts. Please try again later.",
-    #     )
+    session_id = request.cookies.get("session_id")
+    if session_id:
+        background_tasks.add_task(redis.delete, f"session:{session_id}")
 
-    refresh_token = request.refresh_token
-    if not refresh_token:
-        print("Missing refresh token")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token"
-        )
-
-    try:
-        payload = decode_jwt_without_exception(refresh_token)
-        email = payload.get("sub")
-        if email is None:
-            print("Invalid refresh token")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
-            )
-
-        # Check if the refresh token is valid (exists in Redis)
-        session_state = redis.get(f"refresh:{refresh_token}")
-        if session_state != "valid":
-            print("Invalid refresh token")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token"
-            )
-
-        # --- Refresh Token Rotation ---
-        background_tasks.add_task(
-            redis.delete, f"refresh:{refresh_token}"
-        )  # Invalidate the old refresh token
-
-        new_access_token = create_access_token(data={"sub": email})
-        new_refresh_token = create_refresh_token(subject=email)
-
-        background_tasks.add_task(
-            redis.setex,
-            f"refresh:{new_refresh_token}",
-            get_settings().refresh_token_expiry_days * 24 * 60 * 60,
-            "valid",
-        )
-
-        # response = Response(content=json.dumps({"access_token": new_access_token}))
-        response.set_cookie(
-            key="access_token",
-            value=new_access_token,
-            httponly=True,
-            secure=True,
-            samesite="strict",
-            max_age=get_settings().access_token_expiry_minutes * 60,
-            domain=get_settings().cookie_domain,
-        )
-        response.set_cookie(
-            key="refresh_token",
-            value=new_refresh_token,
-            httponly=True,
-            secure=True,
-            samesite="strict",
-            max_age=get_settings().refresh_token_expiry_days * 24 * 60 * 60,
-            domain=get_settings().cookie_domain,
-        )
-
-        return {"message": "Access token refreshed"}
-
-    except jwt.ExpiredSignatureError:
-        print("Token has expired")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired"
-        )
-    except jwt.InvalidTokenError:
-        print("Invalid token")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
-        )
+    response.delete_cookie(key="session_id")
+    return {"message": "Successfully logged out"}
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(
-    request: Request, response: Response, background_tasks: BackgroundTasks
+@router.get("/check-user-logged-in")
+async def check_user_logged_in(
+    user_email: EmailStr = Depends(get_current_user_email),
 ):
-    refresh_token = request.cookies.get("refresh_token")
-    if refresh_token:
-        background_tasks.add_task(
-            redis.delete, f"refresh:{refresh_token}"
-        )  # Invalidate refresh token
-    response = Response()
-    response.delete_cookie("access_token", domain=get_settings().cookie_domain)
-    response.delete_cookie("refresh_token", domain=get_settings().cookie_domain)
-    return response
-
-
-@router.get("/me")
-async def read_users_me(
-    db_session: SessionDep,
-    current_user: dict[str, str] = Depends(get_current_user_query_parameters),
-):
-    email = current_user["email"]
-    query = await db_session.execute(select(User).where(User.email == email))
-    user = query.scalars().first()
-    if not user:
-        return {"message": "User not found"}
-    return {"message": "User found"}
+    return {"message": "User logged in", "email": user_email}

@@ -6,11 +6,12 @@ from fastapi import (
     HTTPException,
     status,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.database import SessionDep
-from app.dependencies import get_current_user_cookies
+from app.database import get_session
+from app.dependencies import get_current_user_email
 from app.models import User, UserGender
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -19,7 +20,7 @@ router = APIRouter(prefix="/users", tags=["users"])
 class CreateUserRequest(BaseModel):
     name: str
     username: str
-    gender: str
+    gender: UserGender  # Use enum directly for better validation
 
 
 @router.post(
@@ -32,34 +33,41 @@ class CreateUserRequest(BaseModel):
     },
 )
 async def create_user(
-    db_session: SessionDep,
     request: CreateUserRequest,
-    current_user=Depends(get_current_user_cookies),
+    email: str = Depends(get_current_user_email),
+    db: AsyncSession = Depends(get_session),
 ):
     try:
-        email = current_user["email"]
-        user = User(email=email)
-        user.name = request.name
-        user.username = request.username
-        user.gender = UserGender[request.gender]
-
-        db_session.add(user)
-        await db_session.commit()
-        await db_session.refresh(user)
-
-        return {"message": "User created successfully"}
-    except HTTPException as e:
-        raise e
-    except ValueError as e:
-        logging.error(e)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logging.error(e)
-        await db_session.rollback()
-        if "unique constraint" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT, detail="User already exists"
+        # Check if user already exists
+        existing_user = await db.execute(
+            select(User).where(
+                (User.email == email) | (User.username == request.username)
             )
+        )
+        if existing_user.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User with this email or username already exists",
+            )
+
+        # Create new user
+        user = User(
+            email=email,
+            name=request.name,
+            username=request.username,
+            gender=request.gender,
+        )
+
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        return {"message": "User created successfully", "user_id": str(user.id)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logging.error(f"Failed to create user: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to create user"
         )
@@ -70,151 +78,47 @@ class CheckUsernameAvailabilityRequest(BaseModel):
 
 
 @router.post(
-    "/attempt/username",
+    "/check-username",
     responses={
         status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
         status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
     },
 )
 async def check_username_availability(
-    db_session: SessionDep,
     request: CheckUsernameAvailabilityRequest,
-    _=Depends(get_current_user_cookies),
+    db: AsyncSession = Depends(get_session),
+    user_email: EmailStr = Depends(get_current_user_email),
 ):
     try:
-        username_exists = await db_session.execute(
-            select(User).where(User.username == request.username)
-        )
-        if username_exists.scalars().first():
-            return {"message": "Username already exists"}
-        return {"message": "Username is available"}
-    except HTTPException as e:
-        raise e
+        result = await db.execute(select(User).where(User.username == request.username))
+        user = result.scalar_one_or_none()
+
+        if user:
+            available = False
+        else:
+            available = True
+        return {"available": available, "username": request.username}
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(e)
+        logging.error(f"Failed to check username availability: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to check username"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to check username availability",
         )
 
 
-# @router.get(
-#     "/",
-#     responses={
-#         status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
-#         status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
-#         status.HTTP_404_NOT_FOUND: {"description": "Not Found"},
-#     },
-# )
-# async def read_me(
-#     db_session: SessionDep,
-#     email: str = Depends(get_current_user),
-# ):
-#     try:
-#         query = await db_session.execute(select(User).where(User.email == email))
-#         user = query.scalars().first()
-#         if not user:
-#             print("User not found")
-#             raise HTTPException(
-#                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-#             )
-#         return {"user": user}
-#     except HTTPException as e:
-#         raise e
-#     except Exception as e:
-#         logging.error(e)
-#         raise HTTPException(
-#             status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to get user"
-#         )
+@router.get("/check-user-created")
+async def check_user_created(
+    db: AsyncSession = Depends(get_session),
+    user_email: EmailStr = Depends(get_current_user_email),
+):
+    user_query = await db.execute(select(User).where(User.email == user_email))
+    user = user_query.scalars().first()
+    if not user:
+        created = False
+    else:
+        created = True
 
-
-# @router.get(
-#     "/",
-#     responses={
-#         status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
-#     },
-# )
-# async def read_users(
-#     db_session: SessionDep,
-#     offset: int = 0,
-#     limit: Annotated[int, Query(le=10)] = 10,
-#     _=Depends(get_current_user_email),
-# ):
-#     try:
-#         users = await db_session.execute(select(User).offset(offset).limit(limit))
-#         return users.scalars().all()
-#     except ValueError as e:
-#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-# @router.get(
-#     "/{user_id}",
-#     responses={
-#         status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
-#         status.HTTP_404_NOT_FOUND: {"description": "Not Found"},
-#     },
-# )
-# async def read_user(
-#     db_session: SessionDep,
-#     user_id: UUID,
-#     _=Depends(get_current_user_email),
-# ):
-#     try:
-#         user = await db_session.get(User, user_id)
-#         if not user:
-#             raise HTTPException(
-#                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-#             )
-#         return user
-#     except ValueError as e:
-#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-# @router.put(
-#     "/{user_id}",
-#     responses={
-#         status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
-#         status.HTTP_404_NOT_FOUND: {"description": "Not Found"},
-#     },
-# )
-# async def update_user(
-#     db_session: SessionDep,
-#     user_id: UUID,
-#     user_data: User,
-#     _=Depends(get_current_user_email),
-# ):
-#     try:
-#         user = await db_session.get(User, user_id)
-#         if not user:
-#             raise HTTPException(
-#                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-#             )
-
-#         for key, value in user_data.model_dump().items():
-#             setattr(user, key, value)
-
-#         await db_session.commit()
-#         await db_session.refresh(user)
-#         return {"message": "User updated successfully"}
-#     except ValueError as e:
-#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-# @router.delete(
-#     "/{user_id}",
-#     status_code=status.HTTP_204_NO_CONTENT,
-#     responses={
-#         status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
-#         status.HTTP_404_NOT_FOUND: {"description": "Not Found"},
-#     },
-# )
-# async def delete_user(db_session: SessionDep, user_id: UUID):
-#     try:
-#         user = await db_session.get(User, user_id)
-#         if not user:
-#             raise HTTPException(
-#                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
-#             )
-#         await db_session.delete(user)
-#         await db_session.commit()
-#     except ValueError as e:
-#         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return {"created": created}

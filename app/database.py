@@ -1,12 +1,8 @@
-from typing import Annotated
-
 import redis
-from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
 from app.config import get_settings
-
 
 # PostgreSQL (asynchronous)
 async_engine = create_async_engine(
@@ -37,9 +33,6 @@ async def create_tables():
 async def get_session():
     async with async_session() as session:
         yield session
-
-
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
 # Redis
