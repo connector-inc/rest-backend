@@ -1,19 +1,22 @@
 services:
   fastapi:
     build: .
+    container_name: fastapi
     restart: always
     ports:
       - "10000:10000"
     environment:
-      - PORT=10000
-      - OPENAPI_URL=/openapi.json
-      - ENVIRONMENT=production
-      - DATABASE_URL_ASYNC=
-      - REDIS_URL=
-      - JWT_ALGORITHM=RS256
-      - JWT_PRIVATE_KEY=
-      - JWT_PUBLIC_KEY=
-      - WEB_APP_URL=https://www.connector.rocks
-      - RESEND_API_KEY=
-      - SENDER_EMAIL=
-      - COOKIE_DOMAIN=.connector.rocks
+      PORT: 10000
+      OPENAPI_URL: /openapi.json
+      ENVIRONMENT: production
+      DATABASE_URL_ASYNC: 
+      REDIS_URL: 
+      JWT_SECRET: 
+      JWT_ALGORITHM: RS256
+      JWT_PRIVATE_KEY: 
+
+      JWT_PUBLIC_KEY: 
+      WEB_APP_URL: https://www.connector.rocks
+      RESEND_API_KEY: 
+      SENDER_EMAIL: noreply@mail.connector.rocks
+      COOKIE_DOMAIN: .connector.rocks

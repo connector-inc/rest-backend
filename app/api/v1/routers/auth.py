@@ -55,7 +55,7 @@ async def send_verification_email(to_email: str, token: str):
         )
 
 
-class LoginRequest(BaseModel):
+class LoginRequestBody(BaseModel):
     email: Annotated[EmailStr, AfterValidator(email_validator)]
 
 
@@ -66,9 +66,22 @@ class LoginRequest(BaseModel):
         status.HTTP_500_INTERNAL_SERVER_ERROR: {"description": "Internal Server Error"},
     },
 )
-async def login(request: LoginRequest, background_tasks: BackgroundTasks):
+async def login(
+    request: Request,
+    request_body: LoginRequestBody,
+    background_tasks: BackgroundTasks,
+):
     try:
-        email = request.email
+        session_id = request.cookies.get("session_id")
+        if session_id:
+            current_user_email = redis.get(f"session:{session_id}")
+            if current_user_email:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User already logged in",
+                )
+
+        email = request_body.email
         token = create_login_token(email)
         background_tasks.add_task(
             redis.setex,
@@ -90,28 +103,33 @@ async def login(request: LoginRequest, background_tasks: BackgroundTasks):
 
 @router.get(
     "/verify",
-    responses={
-        status.HTTP_400_BAD_REQUEST: {"description": "Bad Request"},
-        status.HTTP_401_UNAUTHORIZED: {"description": "Unauthorized"},
-    },
 )
-async def verify(token: str, response: Response, background_tasks: BackgroundTasks):
+async def verify(
+    token: str,
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+):
     try:
-        # Validate and decode JWT token
+        session_id = request.cookies.get("session_id")
+        print(session_id)
+        if session_id:
+            current_user_email = redis.get(f"session:{session_id}")
+            print(current_user_email)
+            if current_user_email:
+                return RedirectResponse(
+                    url=f"{get_settings().web_app_url}/",
+                    status_code=status.HTTP_302_FOUND,
+                )
+
         payload = decode_jwt(token)
         if not payload or "sub" not in payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token",
-            )
+            raise Exception("Invalid payload in token")
 
         email = payload["sub"]
         redis_token = redis.get(f"login:{email}")
         if not redis_token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token expired",
-            )
+            raise Exception("Login session expired")
 
         background_tasks.add_task(redis.delete, f"login:{email}")
 
@@ -142,12 +160,11 @@ async def verify(token: str, response: Response, background_tasks: BackgroundTas
         )
 
         return response
-    except HTTPException:
-        raise
     except Exception as e:
         logging.error(f"Failed to verify token: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to verify token"
+        return RedirectResponse(
+            url=f"{get_settings().web_app_url}/login?error=invalid_or_expired_token",
+            status_code=status.HTTP_302_FOUND,
         )
 
 
@@ -168,6 +185,6 @@ async def logout(
 
 @router.get("/check-user-logged-in")
 async def check_user_logged_in(
-    user_email: EmailStr = Depends(get_current_user_email),
+    current_user_email: EmailStr = Depends(get_current_user_email),
 ):
-    return {"message": "User logged in", "email": user_email}
+    return {"message": "User logged in", "email": current_user_email}

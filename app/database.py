@@ -7,7 +7,7 @@ from app.config import get_settings
 # PostgreSQL (asynchronous)
 async_engine = create_async_engine(
     url=get_settings().database_url_async,
-    echo=True,
+    # echo=True,
     # Disable the PostgreSQL JIT to improve ENUM datatype handling
     # https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#disabling-the-postgresql-jit-to-improve-enum-datatype-handling
     connect_args={"server_settings": {"jit": "off"}},

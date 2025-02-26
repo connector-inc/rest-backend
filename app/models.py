@@ -1,7 +1,9 @@
 import enum
+import random
+import string
+import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Optional
-from uuid import UUID, uuid4
 
 from pydantic import AfterValidator, EmailStr
 from sqlmodel import (
@@ -16,6 +18,12 @@ from sqlmodel import (
 )
 
 from app.validators import email_validator
+
+letters_and_digits = string.ascii_letters + string.digits
+
+
+def random_id():
+    return "".join(random.choices(letters_and_digits, k=12))
 
 
 class UserStatus(str, enum.Enum):
@@ -33,7 +41,7 @@ class UserGender(str, enum.Enum):
 class User(SQLModel, table=True):
     __tablename__: str = "users"  # type: ignore
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: datetime = Field(
         default=datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True))
     )
@@ -54,14 +62,14 @@ class User(SQLModel, table=True):
     bio: Optional[str] = Field(default=None)
     is_private: bool = Field(default=False)
 
-    threads: list["Thread"] = Relationship(back_populates="user", cascade_delete=True)
+    posts: list["Post"] = Relationship(back_populates="user", cascade_delete=True)
     replies: list["Reply"] = Relationship(back_populates="user", cascade_delete=True)
 
 
-class Thread(SQLModel, table=True):
-    __tablename__: str = "threads"  # type: ignore
+class Post(SQLModel, table=True):
+    __tablename__: str = "posts"  # type: ignore
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    id: str = Field(default_factory=random_id, primary_key=True)
     created_at: datetime = Field(
         default=datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True))
     )
@@ -74,16 +82,18 @@ class Thread(SQLModel, table=True):
     likes: int = Field(default=0)
     edited: bool = Field(default=False)
 
-    replies: list["Reply"] = Relationship(back_populates="thread", cascade_delete=True)
+    user_id: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id")
 
-    user_id: Optional[UUID] = Field(default=None, foreign_key="users.id")
-    user: Optional["User"] = Relationship(back_populates="threads")
+    user: Optional["User"] = Relationship(
+        back_populates="posts", sa_relationship_kwargs=dict(lazy="selectin")
+    )
+    replies: list["Reply"] = Relationship(back_populates="post", cascade_delete=True)
 
 
 class Reply(SQLModel, table=True):
     __tablename__: str = "replies"  # type: ignore
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    id: str = Field(default_factory=random_id, primary_key=True)
     created_at: datetime = Field(
         default=datetime.today(), sa_column=Column(DateTime(timezone=True))
     )
@@ -92,8 +102,8 @@ class Reply(SQLModel, table=True):
     media: list[str] = Field(sa_column=Column(ARRAY(String)))
     likes: int = Field(default=0)
 
-    user_id: Optional[UUID] = Field(default=None, foreign_key="users.id")
-    user: Optional["User"] = Relationship(back_populates="replies")
+    user_id: Optional[uuid.UUID] = Field(default=None, foreign_key="users.id")
+    post_id: Optional[str] = Field(default=None, foreign_key="posts.id")
 
-    thread_id: Optional[UUID] = Field(default=None, foreign_key="threads.id")
-    thread: Optional["Thread"] = Relationship(back_populates="replies")
+    user: Optional["User"] = Relationship(back_populates="replies")
+    post: Optional["Post"] = Relationship(back_populates="replies")
