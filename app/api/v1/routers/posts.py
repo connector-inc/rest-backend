@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select, desc
+from sqlmodel import asc, select, desc
 
 from app.database import get_session
 from app.dependencies import get_current_user
@@ -74,7 +74,7 @@ async def get_posts(
             .where(Post.user_id == User.id)
             .offset(offset)
             .limit(limit)
-            .order_by(desc(Post.created_at))
+            .order_by(asc(Post.created_at))
         )
         posts = await db.execute(query)
         posts_with_user = [

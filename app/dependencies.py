@@ -23,7 +23,7 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
         )
 
-    user_email = str(redis.get(f"session:{session_id}"))
+    user_email = redis.get(f"session:{session_id}")
     if not user_email:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired"
@@ -48,10 +48,10 @@ async def get_current_user_email(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated"
         )
 
-    user_email = str(redis.get(f"session:{session_id}"))
+    user_email = redis.get(f"session:{session_id}")
     if not user_email:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired"
         )
 
-    return user_email
+    return str(user_email)

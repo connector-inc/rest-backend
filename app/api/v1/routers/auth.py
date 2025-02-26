@@ -74,7 +74,7 @@ async def login(
     try:
         session_id = request.cookies.get("session_id")
         if session_id:
-            current_user_email = str(redis.get(f"session:{session_id}"))
+            current_user_email = redis.get(f"session:{session_id}")
             if current_user_email:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -82,6 +82,7 @@ async def login(
                 )
 
         email = request_body.email
+        print(email)
         token = create_login_token(email)
         background_tasks.add_task(
             redis.setex,
@@ -105,7 +106,7 @@ async def login(
     "/verify",
 )
 async def verify(
-    session_token: str,
+    token: str,
     request: Request,
     response: Response,
     background_tasks: BackgroundTasks,
@@ -113,18 +114,19 @@ async def verify(
     try:
         session_id = request.cookies.get("session_id")
         if session_id:
-            current_user_email = str(redis.get(f"session:{session_id}"))
+            current_user_email = redis.get(f"session:{session_id}")
             if current_user_email:
                 return RedirectResponse(
                     url=f"{get_settings().web_app_url}/",
                     status_code=status.HTTP_302_FOUND,
                 )
 
-        payload = decode_jwt(session_token)
+        payload = decode_jwt(token)
         if not payload or "sub" not in payload:
             raise Exception("Invalid payload in token")
 
         email = payload["sub"]
+        print(email)
         session_token = str(redis.get(f"login:{email}"))
         if not session_token:
             raise Exception("Login session expired")
