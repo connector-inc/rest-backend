@@ -13,11 +13,11 @@ from app.config import get_settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if get_settings().environment == "production":
-        from app.database import create_tables, drop_tables
+    # if get_settings().environment == "production":
+    #     from app.database import create_tables, drop_tables
 
-        await drop_tables()
-        await create_tables()
+    #     await drop_tables()
+    #     await create_tables()
     yield
 
 
