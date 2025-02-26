@@ -72,9 +72,9 @@ async def get_posts(
             select(Post)
             .join(User)
             .where(Post.user_id == User.id)
+            .order_by(desc(Post.created_at))
             .offset(offset)
             .limit(limit)
-            .order_by(asc(Post.created_at))
         )
         posts = await db.execute(query)
         posts_with_user = [

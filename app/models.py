@@ -43,7 +43,8 @@ class User(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: datetime = Field(
-        default=datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True))
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True)),
     )
     status: UserStatus = Field(
         default=UserStatus.active,
@@ -71,10 +72,12 @@ class Post(SQLModel, table=True):
 
     id: str = Field(default_factory=random_id, primary_key=True)
     created_at: datetime = Field(
-        default=datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True))
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True)),
     )
     updated_at: datetime = Field(
-        default=datetime.now(timezone.utc), sa_column=Column(DateTime(timezone=True))
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True)),
     )
 
     content: str = Field(index=True)
@@ -95,7 +98,12 @@ class Reply(SQLModel, table=True):
 
     id: str = Field(default_factory=random_id, primary_key=True)
     created_at: datetime = Field(
-        default=datetime.today(), sa_column=Column(DateTime(timezone=True))
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True)),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True)),
     )
 
     content: str = Field(index=True)
