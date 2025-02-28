@@ -82,7 +82,6 @@ async def login(
                 )
 
         email = request_body.email
-        print(email)
         token = create_login_token(email)
         background_tasks.add_task(
             redis.setex,
@@ -126,7 +125,6 @@ async def verify(
             raise Exception("Invalid payload in token")
 
         email = payload["sub"]
-        print(email)
         session_token = str(redis.get(f"login:{email}"))
         if not session_token:
             raise Exception("Login session expired")
@@ -188,3 +186,13 @@ async def check_user_logged_in(
     current_user_email: EmailStr = Depends(get_current_user_email),
 ):
     return {"message": "User logged in", "email": current_user_email}
+
+
+@router.get("/me")
+async def get_me(current_user: User = Depends(get_current_user)):
+    # Return only necessary user information
+    return {
+        "name": current_user.name,
+        "username": current_user.username,
+        "profile_picture": current_user.profile_picture,
+    }

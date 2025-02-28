@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.database import get_session
-from app.dependencies import get_current_user_email
+from app.dependencies import get_current_user, get_current_user_email
 from app.models import User, UserGender
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -117,3 +117,10 @@ async def check_user_created(
         created = True
 
     return {"created": created}
+
+
+@router.get("/@{username}")
+async def get_user_with_username(
+    username: str, current_user: User = Depends(get_current_user)
+):
+    pass
